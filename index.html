@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OpenForge — Sign in</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div class="page-wrap">
+
+  <div class="auth-header">
+    <div class="logo">Open<span>Forge</span></div>
+    <p class="subtitle">A community library of reinvented ML modules and algorithms.</p>
+  </div>
+
+  <div class="card">
+
+    <!-- Tab switcher -->
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="login">Sign in</button>
+      <button class="tab-btn"        data-tab="register">Create account</button>
+    </div>
+
+    <!-- ── LOGIN ── -->
+    <div id="tab-login" class="tab-panel active">
+      <div id="login-error" class="alert alert--error"></div>
+      <div id="login-success" class="alert alert--success"></div>
+
+      <div class="field">
+        <label for="login-email">Email</label>
+        <input type="email" id="login-email" placeholder="you@example.com" autocomplete="email" />
+      </div>
+
+      <div class="field">
+        <label for="login-password">Password</label>
+        <input type="password" id="login-password" placeholder="••••••••" autocomplete="current-password" />
+      </div>
+
+      <button class="btn btn--primary btn--full" id="login-btn">Sign in</button>
+    </div>
+
+    <!-- ── REGISTER ── -->
+    <div id="tab-register" class="tab-panel">
+      <div id="reg-error" class="alert alert--error"></div>
+      <div id="reg-success" class="alert alert--success"></div>
+
+      <div class="field">
+        <label for="reg-username">Username</label>
+        <input type="text" id="reg-username" placeholder="alex_ml" autocomplete="off" />
+        <span class="field-hint">Lowercase letters, numbers, underscores. Becomes your module namespace: <code>openforge.username</code></span>
+      </div>
+
+      <div class="field">
+        <label for="reg-email">Email</label>
+        <input type="email" id="reg-email" placeholder="you@example.com" autocomplete="email" />
+      </div>
+
+      <div class="field">
+        <label for="reg-password">Password</label>
+        <input type="password" id="reg-password" placeholder="8–12 characters" autocomplete="new-password" />
+        <span class="field-hint">8–12 characters.</span>
+      </div>
+
+      <div class="field">
+        <label for="reg-confirm">Confirm password</label>
+        <input type="password" id="reg-confirm" placeholder="Re-enter password" autocomplete="new-password" />
+      </div>
+
+      <button class="btn btn--primary btn--full" id="register-btn">Create account</button>
+    </div>
+
+  </div><!-- /card -->
+
+  <p style="text-align:center; margin-top:1.5rem; font-size:0.8125rem; color:var(--muted);">
+    OpenForge is open-source. View on
+    <a href="https://github.com/YOUR_GITHUB/OpenForge" target="_blank"
+       style="color:var(--accent); text-decoration:none;">GitHub</a>.
+  </p>
+
+</div><!-- /page-wrap -->
+
+<!-- ── Supabase SDK (CDN) ─────────────────────────────────── -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<script>
+  // ── CONFIG ──────────────────────────────────────────────
+  // Replace these two values after you create your Supabase project.
+  // You find them in: Supabase dashboard → Project Settings → API
+  const SUPABASE_URL    = 'https://njrmizljaqsiuxhlrfia.supabase.co';
+  const SUPABASE_ANON   = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5qcm1pemxqYXFzaXV4aGxyZmlhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI0MDI0MDMsImV4cCI6MjA5Nzk3ODQwM30.Gw53iwGYMMONZzA6XJmdYh_fwSVWwasJ4V-P9KmE-5s';
+
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+
+  // ── Redirect if already logged in ───────────────────────
+  sb.auth.getSession().then(({ data }) => {
+    if (data.session) window.location.href = 'dashboard.html';
+  });
+
+  // ── Tab switching ────────────────────────────────────────
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    });
+  });
+
+  // ── Helpers ──────────────────────────────────────────────
+  function showAlert(id, msg) {
+    const el = document.getElementById(id);
+    el.textContent = msg;
+    el.classList.add('visible');
+  }
+
+  function clearAlerts(...ids) {
+    ids.forEach(id => {
+      const el = document.getElementById(id);
+      el.textContent = '';
+      el.classList.remove('visible');
+    });
+  }
+
+  function setLoading(btn, loading) {
+    btn.disabled = loading;
+    btn.innerHTML = loading
+      ? '<span class="spinner"></span>'
+      : btn.dataset.label;
+  }
+
+  // Save original labels
+  document.getElementById('login-btn').dataset.label    = 'Sign in';
+  document.getElementById('register-btn').dataset.label = 'Create account';
+
+  // ── LOGIN ────────────────────────────────────────────────
+  document.getElementById('login-btn').addEventListener('click', async () => {
+    clearAlerts('login-error', 'login-success');
+
+    const email    = document.getElementById('login-email').value.trim();
+    const password = document.getElementById('login-password').value;
+
+    if (!email || !password) {
+      showAlert('login-error', 'Please fill in all fields.');
+      return;
+    }
+
+    const btn = document.getElementById('login-btn');
+    setLoading(btn, true);
+
+    const { error } = await sb.auth.signInWithPassword({ email, password });
+
+    setLoading(btn, false);
+
+    if (error) {
+      showAlert('login-error', error.message);
+    } else {
+      window.location.href = 'dashboard.html';
+    }
+  });
+
+  // ── REGISTER ─────────────────────────────────────────────
+  document.getElementById('register-btn').addEventListener('click', async () => {
+    clearAlerts('reg-error', 'reg-success');
+
+    const username = document.getElementById('reg-username').value.trim().toLowerCase();
+    const email    = document.getElementById('reg-email').value.trim();
+    const password = document.getElementById('reg-password').value;
+    const confirm  = document.getElementById('reg-confirm').value;
+
+    // Client-side validation
+    if (!username || !email || !password || !confirm) {
+      showAlert('reg-error', 'Please fill in all fields.'); return;
+    }
+    if (!/^[a-z0-9_]+$/.test(username)) {
+      showAlert('reg-error', 'Username may only contain lowercase letters, numbers, and underscores.'); return;
+    }
+    if (username.length < 3 || username.length > 30) {
+      showAlert('reg-error', 'Username must be 3–30 characters.'); return;
+    }
+    if (password.length < 8 || password.length > 12) {
+      showAlert('reg-error', 'Password must be 8–12 characters.'); return;
+    }
+    if (password !== confirm) {
+      showAlert('reg-error', 'Passwords do not match.'); return;
+    }
+
+    const btn = document.getElementById('register-btn');
+    setLoading(btn, true);
+
+    // Check username is not already taken (queries your 'profiles' table)
+    const { data: existing } = await sb
+      .from('profiles')
+      .select('username')
+      .eq('username', username)
+      .maybeSingle();
+
+    if (existing) {
+      showAlert('reg-error', 'That username is already taken.');
+      setLoading(btn, false);
+      return;
+    }
+
+    // Create the auth account
+    const { data: authData, error: authErr } = await sb.auth.signUp({
+      email,
+      password,
+      options: { data: { username } }   // stored in auth.users.raw_user_meta_data
+    });
+
+    if (authErr) {
+      showAlert('reg-error', authErr.message);
+      setLoading(btn, false);
+      return;
+    }
+
+    setLoading(btn, false);
+    showAlert('reg-success', 'Account created! You can now sign in.'); 
+  });
+</script>
+
+</body>
+</html>

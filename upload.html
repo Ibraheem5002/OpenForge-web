@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OpenForge — Upload module</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<!-- ── Nav ──────────────────────────────────────────────── -->
+<nav class="navbar">
+  <a href="dashboard.html" class="navbar__brand">Open<span>Forge</span></a>
+  <div class="navbar__right">
+    <span class="navbar__user" id="nav-username">…</span>
+    <button class="btn btn--ghost" id="signout-btn" style="font-size:0.8125rem;padding:0.4rem 0.875rem;">Sign out</button>
+  </div>
+</nav>
+
+<!-- ── Main ─────────────────────────────────────────────── -->
+<div class="page-wrap">
+
+  <div style="margin-bottom:1.75rem;">
+    <h1>Upload a module</h1>
+    <p class="subtitle" style="margin-bottom:0;">
+      Upload a <strong>.zip</strong> of your module folder.
+      It will be submitted as a pull request on GitHub.
+    </p>
+  </div>
+
+  <!-- Replace-mode banner -->
+  <div id="replace-banner" class="alert alert--warn" style="display:none;">
+    ⚠ You are replacing an existing module. This <strong>cannot be undone</strong>.
+    The previous version will be permanently overwritten once the PR is merged.
+  </div>
+
+  <!-- Error / success -->
+  <div id="upload-error"   class="alert alert--error"></div>
+  <div id="upload-success" class="alert alert--success"></div>
+
+  <div class="card">
+
+    <!-- Module name -->
+    <div class="field">
+      <label for="module-name">Module name</label>
+      <input type="text" id="module-name" placeholder="e.g. markov_chains" />
+      <span class="field-hint">
+        Used as the top-level folder name inside your namespace.
+        Lowercase letters, numbers, underscores only.
+      </span>
+    </div>
+
+    <!-- File picker / drop zone -->
+    <div class="field">
+      <label>Module folder (zipped)</label>
+      <div class="drop-zone" id="drop-zone">
+        <div class="drop-zone__icon">📦</div>
+        <div class="drop-zone__text">
+          <strong>Click to select</strong> or drag a .zip file here
+        </div>
+        <div id="file-name-display" style="margin-top:0.5rem; font-size:0.8125rem; color:var(--accent);"></div>
+      </div>
+      <!-- Hidden real file input -->
+      <input type="file" id="file-input" accept=".zip" style="display:none;" />
+      <span class="field-hint">
+        Zip your module folder directly. Max 50 MB.
+        The folder structure inside the zip becomes your namespace path.
+      </span>
+    </div>
+
+    <!-- Structure preview -->
+    <div id="structure-preview" style="display:none; margin-bottom:1.1rem;">
+      <label style="margin-bottom:0.375rem;">Path preview</label>
+      <pre id="structure-text"
+           style="font-family:var(--font-mono); font-size:0.78rem; color:var(--accent);
+                  background:var(--bg); border:1px solid var(--border); border-radius:var(--radius);
+                  padding:0.75rem 1rem; overflow-x:auto;"></pre>
+    </div>
+
+    <button class="btn btn--primary btn--full" id="upload-btn">Submit module</button>
+
+  </div>
+
+  <p style="margin-top:1rem; font-size:0.8125rem; color:var(--muted);">
+    After submitting, a GitHub pull request is opened automatically.
+    A maintainer will review and merge it. You'll see the status on your
+    <a href="dashboard.html" style="color:var(--accent); text-decoration:none;">dashboard</a>.
+  </p>
+
+</div><!-- /page-wrap -->
+
+<!-- ── Overwrite confirmation modal ─────────────────────── -->
+<div class="modal-backdrop" id="overwrite-modal">
+  <div class="modal">
+    <h2>Overwrite existing module?</h2>
+    <p>
+      A module at this path already exists under your namespace.
+      Submitting will permanently replace it once the pull request is merged.
+      <strong>This cannot be undone.</strong>
+    </p>
+    <div class="modal__actions">
+      <button class="btn btn--ghost" id="modal-cancel">Cancel</button>
+      <button class="btn btn--danger" id="modal-confirm">Yes, replace it</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Supabase SDK ───────────────────────────────────────── -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<script>
+  // ── CONFIG ──────────────────────────────────────────────
+  const SUPABASE_URL  = 'https://njrmizljaqsiuxhlrfia.supabase.co';
+  const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5qcm1pemxqYXFzaXV4aGxyZmlhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI0MDI0MDMsImV4cCI6MjA5Nzk3ODQwM30.Gw53iwGYMMONZzA6XJmdYh_fwSVWwasJ4V-P9KmE-5s';
+
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+
+  let currentUser    = null;
+  let currentProfile = null;
+  let selectedFile   = null;
+  let replaceMode    = false;   // true if user is replacing an existing module
+
+  // ── Auth guard ───────────────────────────────────────────
+  async function init() {
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) { window.location.href = 'index.html'; return; }
+
+    currentUser = session.user;
+
+    const { data: profile } = await sb
+      .from('profiles')
+      .select('username')
+      .eq('id', currentUser.id)
+      .single();
+
+    if (!profile) { window.location.href = 'index.html'; return; }
+    currentProfile = profile;
+    document.getElementById('nav-username').textContent = profile.username;
+
+    // Check if arriving from "Replace" link in dashboard (?replace=path)
+    const params = new URLSearchParams(window.location.search);
+    const replacePath = params.get('replace');
+    if (replacePath) {
+      replaceMode = true;
+      document.getElementById('replace-banner').style.display = 'block';
+      // Pre-fill module name from path (first segment)
+      const topFolder = replacePath.split('/')[0];
+      document.getElementById('module-name').value = topFolder;
+    }
+  }
+
+  init();
+
+  // ── Sign out ─────────────────────────────────────────────
+  document.getElementById('signout-btn').addEventListener('click', async () => {
+    await sb.auth.signOut();
+    window.location.href = 'index.html';
+  });
+
+  // ── Drop zone + file picker ──────────────────────────────
+  const dropZone  = document.getElementById('drop-zone');
+  const fileInput = document.getElementById('file-input');
+
+  dropZone.addEventListener('click', () => fileInput.click());
+
+  dropZone.addEventListener('dragover', e => {
+    e.preventDefault();
+    dropZone.classList.add('dragover');
+  });
+
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('dragover');
+    const file = e.dataTransfer.files[0];
+    if (file) handleFileSelect(file);
+  });
+
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files[0]) handleFileSelect(fileInput.files[0]);
+  });
+
+  function handleFileSelect(file) {
+    if (!file.name.endsWith('.zip')) {
+      showAlert('upload-error', 'Only .zip files are accepted.');
+      return;
+    }
+    if (file.size > 50 * 1024 * 1024) {
+      showAlert('upload-error', 'File is too large. Maximum size is 50 MB.');
+      return;
+    }
+
+    selectedFile = file;
+    clearAlert('upload-error');
+    document.getElementById('file-name-display').textContent = file.name;
+
+    // Show path preview
+    updatePreview();
+  }
+
+  // Live preview updates when module name changes
+  document.getElementById('module-name').addEventListener('input', updatePreview);
+
+  function updatePreview() {
+    const name     = document.getElementById('module-name').value.trim() || '<module_name>';
+    const username = currentProfile ? currentProfile.username : '<username>';
+    const preview  = document.getElementById('structure-preview');
+    const text     = document.getElementById('structure-text');
+
+    if (selectedFile || document.getElementById('module-name').value.trim()) {
+      preview.style.display = 'block';
+      text.textContent =
+        `OpenForge/\n` +
+        `└── OpenForge/\n` +
+        `    └── ${username}/\n` +
+        `        └── ${name}/\n` +
+        `            └── (contents of your zip)`;
+    } else {
+      preview.style.display = 'none';
+    }
+  }
+
+  // ── Submit ───────────────────────────────────────────────
+  document.getElementById('upload-btn').addEventListener('click', async () => {
+    clearAlert('upload-error');
+    clearAlert('upload-success');
+
+    const moduleName = document.getElementById('module-name').value.trim().toLowerCase();
+
+    if (!moduleName) { showAlert('upload-error', 'Enter a module name.'); return; }
+    if (!/^[a-z0-9_]+$/.test(moduleName)) {
+      showAlert('upload-error', 'Module name may only contain lowercase letters, numbers, and underscores.');
+      return;
+    }
+    if (!selectedFile) { showAlert('upload-error', 'Select a .zip file to upload.'); return; }
+
+    // Check if this module path already exists
+    const modulePath = moduleName;
+    const { data: existing } = await sb
+      .from('models')
+      .select('id')
+      .eq('user_id', currentUser.id)
+      .eq('module_path', modulePath)
+      .maybeSingle();
+
+    if (existing && !replaceMode) {
+      // Show the overwrite confirmation modal
+      showModal(modulePath);
+      return;
+    }
+
+    // Either no conflict, or user already confirmed → proceed
+    await doUpload(moduleName, modulePath);
+  });
+
+  // ── Modal ────────────────────────────────────────────────
+  function showModal(path) {
+    document.getElementById('overwrite-modal').classList.add('visible');
+
+    document.getElementById('modal-confirm').onclick = async () => {
+      hideModal();
+      const moduleName = document.getElementById('module-name').value.trim().toLowerCase();
+      await doUpload(moduleName, path);
+    };
+  }
+
+  document.getElementById('modal-cancel').addEventListener('click', hideModal);
+
+  function hideModal() {
+    document.getElementById('overwrite-modal').classList.remove('visible');
+  }
+
+  // ── Actual upload logic ──────────────────────────────────
+  async function doUpload(moduleName, modulePath) {
+    const btn = document.getElementById('upload-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Uploading…';
+
+    try {
+      // 1. Upload zip to Supabase Storage under: uploads/{user_id}/{moduleName}.zip
+      const storagePath = `${currentUser.id}/${moduleName}_${Date.now()}.zip`;
+
+      const { error: storageErr } = await sb.storage
+        .from('module-uploads')        // bucket name — create this in Supabase dashboard
+        .upload(storagePath, selectedFile, { upsert: true });
+
+      if (storageErr) throw new Error('Storage upload failed: ' + storageErr.message);
+
+      // 2. Record the upload in the 'models' table
+      //    (pr_status = 'pending' — the Edge Function / GitHub Action will update it)
+      const modelRecord = {
+        user_id     : currentUser.id,
+        module_name : moduleName,
+        module_path : modulePath,
+        storage_path: storagePath,
+        pr_status   : 'pending',
+        pr_url      : null,
+        uploaded_at : new Date().toISOString(),
+      };
+
+      const { error: dbErr } = await sb
+        .from('models')
+        .upsert(modelRecord, { onConflict: 'user_id,module_path' });
+
+      if (dbErr) throw new Error('Database save failed: ' + dbErr.message);
+
+      // 3. Trigger the Edge Function that will open the GitHub PR
+      //    (Phase 4 — wired in later; for now this is a placeholder call)
+      // await triggerGitHubPR(storagePath, modulePath, moduleName);
+
+      btn.innerHTML = 'Submit module';
+      btn.disabled  = false;
+
+      showAlert('upload-success',
+        'Module uploaded! A pull request will be opened on GitHub shortly. ' +
+        'Check your dashboard for status updates.');
+
+      // Clear form
+      selectedFile = null;
+      document.getElementById('file-name-display').textContent = '';
+      document.getElementById('file-input').value = '';
+      document.getElementById('module-name').value = '';
+      document.getElementById('structure-preview').style.display = 'none';
+
+    } catch (err) {
+      btn.innerHTML = 'Submit module';
+      btn.disabled  = false;
+      showAlert('upload-error', err.message);
+    }
+  }
+
+  // ── Alert helpers ────────────────────────────────────────
+  function showAlert(id, msg) {
+    const el = document.getElementById(id);
+    el.textContent = msg;
+    el.classList.add('visible');
+  }
+
+  function clearAlert(id) {
+    const el = document.getElementById(id);
+    el.textContent = '';
+    el.classList.remove('visible');
+  }
+</script>
+
+</body>
+</html>

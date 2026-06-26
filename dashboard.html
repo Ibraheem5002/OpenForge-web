@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OpenForge — Dashboard</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<!-- ── Nav ──────────────────────────────────────────────── -->
+<nav class="navbar">
+  <a href="dashboard.html" class="navbar__brand">Open<span>Forge</span></a>
+  <div class="navbar__right">
+    <span class="navbar__user" id="nav-username">…</span>
+    <button class="btn btn--ghost" id="signout-btn" style="font-size:0.8125rem;padding:0.4rem 0.875rem;">Sign out</button>
+  </div>
+</nav>
+
+<!-- ── Main ─────────────────────────────────────────────── -->
+<div class="page-wrap--wide">
+
+  <!-- Page header -->
+  <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:1.75rem; flex-wrap:wrap; gap:1rem;">
+    <div>
+      <h1>Your modules</h1>
+      <p class="subtitle" style="margin-bottom:0;">Files uploaded under your namespace on OpenForge.</p>
+    </div>
+    <a href="upload.html" class="btn btn--primary">+ Upload module</a>
+  </div>
+
+  <!-- Status alert -->
+  <div id="dash-alert" class="alert alert--error" style="margin-bottom:1.25rem;"></div>
+
+  <!-- Model list -->
+  <div id="model-list-wrap">
+    <div class="empty-state" id="empty-state" style="display:none;">
+      <div style="font-size:2rem;">📂</div>
+      <p>You haven't uploaded any modules yet.</p>
+      <a href="upload.html" class="btn btn--primary" style="margin-top:1rem;">Upload your first module</a>
+    </div>
+    <div class="model-list" id="model-list"></div>
+  </div>
+
+  <!-- Namespace info box -->
+  <div class="card" style="margin-top:2.5rem;">
+    <h3>Your namespace</h3>
+    <p style="color:var(--muted); font-size:0.875rem; margin-top:0.5rem;">
+      All your modules are accessible at:
+    </p>
+    <pre id="namespace-example"
+         style="font-family:var(--font-mono); font-size:0.8rem; color:var(--accent);
+                background:var(--bg); border:1px solid var(--border); border-radius:var(--radius);
+                padding:0.75rem 1rem; margin-top:0.75rem; overflow-x:auto;">
+from openforge.YOUR_USERNAME import your_module</pre>
+  </div>
+
+</div><!-- /page-wrap--wide -->
+
+<!-- ── Supabase SDK ───────────────────────────────────────── -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<script>
+  // ── CONFIG — same values as index.html ──────────────────
+  const SUPABASE_URL  = 'https://njrmizljaqsiuxhlrfia.supabase.co';
+  const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5qcm1pemxqYXFzaXV4aGxyZmlhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI0MDI0MDMsImV4cCI6MjA5Nzk3ODQwM30.Gw53iwGYMMONZzA6XJmdYh_fwSVWwasJ4V-P9KmE-5s';
+
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+
+  // ── Auth guard ───────────────────────────────────────────
+  // If user is not logged in, send them to the login page.
+  let currentUser = null;
+  let currentProfile = null;
+
+  async function init() {
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) {
+      window.location.href = 'index.html';
+      return;
+    }
+
+    currentUser = session.user;
+
+    // Load profile (username)
+    const { data: profile, error: profileErr } = await sb
+      .from('profiles')
+      .select('username')
+      .eq('id', currentUser.id)
+      .single();
+
+    if (profileErr || !profile) {
+      showDashAlert('Could not load your profile. Try signing out and back in.');
+      return;
+    }
+
+    currentProfile = profile;
+
+    // Update UI with username
+    document.getElementById('nav-username').textContent = profile.username;
+    document.getElementById('namespace-example').textContent =
+      `from openforge.${profile.username} import your_module`;
+
+    // Load this user's modules
+    loadModules(currentUser.id);
+  }
+
+  init();
+
+  // ── Sign out ─────────────────────────────────────────────
+  document.getElementById('signout-btn').addEventListener('click', async () => {
+    await sb.auth.signOut();
+    window.location.href = 'index.html';
+  });
+
+  // ── Load modules from 'models' table ────────────────────
+  async function loadModules(userId) {
+    const { data: models, error } = await sb
+      .from('models')
+      .select('*')
+      .eq('user_id', userId)
+      .order('uploaded_at', { ascending: false });
+
+    if (error) {
+      showDashAlert('Failed to load modules: ' + error.message);
+      return;
+    }
+
+    const listEl   = document.getElementById('model-list');
+    const emptyEl  = document.getElementById('empty-state');
+
+    listEl.innerHTML = '';
+
+    if (!models || models.length === 0) {
+      emptyEl.style.display = 'block';
+      return;
+    }
+
+    emptyEl.style.display = 'none';
+
+    models.forEach(m => {
+      const item = document.createElement('div');
+      item.className = 'model-item';
+
+      const statusClass = {
+        pending : 'badge--pending',
+        merged  : 'badge--merged',
+        failed  : 'badge--failed',
+      }[m.pr_status] || 'badge--pending';
+
+      const uploadedDate = new Date(m.uploaded_at).toLocaleDateString('en-GB', {
+        day: '2-digit', month: 'short', year: 'numeric'
+      });
+
+      item.innerHTML = `
+        <div>
+          <div><strong>${escHtml(m.module_name)}</strong>
+            <span class="badge ${statusClass}" style="margin-left:0.5rem;">${escHtml(m.pr_status || 'pending')}</span>
+          </div>
+          <div class="model-item__path">OpenForge/${escHtml(currentProfile.username)}/${escHtml(m.module_path)}</div>
+          <div class="model-item__meta">Uploaded ${uploadedDate}
+            ${m.pr_url ? `· <a href="${escHtml(m.pr_url)}" target="_blank"
+              style="color:var(--accent);text-decoration:none;">View PR</a>` : ''}
+          </div>
+        </div>
+        <div class="model-item__actions">
+          <a href="upload.html?replace=${encodeURIComponent(m.module_path)}"
+             class="btn btn--ghost" style="font-size:0.8125rem;padding:0.4rem 0.875rem;">Replace</a>
+        </div>
+      `;
+
+      listEl.appendChild(item);
+    });
+  }
+
+  // ── Helpers ──────────────────────────────────────────────
+  function showDashAlert(msg) {
+    const el = document.getElementById('dash-alert');
+    el.textContent = msg;
+    el.classList.add('visible');
+  }
+
+  function escHtml(str) {
+    if (!str) return '';
+    return str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+</script>
+
+</body>
+</html>
