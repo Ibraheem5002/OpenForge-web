@@ -197,6 +197,7 @@ input[type="file"] {
   border-radius: var(--radius);
   font-size: 0.875rem;
   margin-bottom: 1rem;
+  white-space: pre-line;
   display: none;
 }
 
