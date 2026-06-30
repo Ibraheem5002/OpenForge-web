@@ -279,13 +279,41 @@
 
     try {
       // 1. Upload zip to Supabase Storage under: uploads/{user_id}/{moduleName}.zip
-      const storagePath = `${currentUser.id}/${moduleName}_${Date.now()}.zip`;
-
       const { error: storageErr } = await sb.storage
-        .from('module-uploads')        // bucket name — create this in Supabase dashboard
+        .from('module-uploads')
         .upload(storagePath, selectedFile, { upsert: true });
 
       if (storageErr) throw new Error('Storage upload failed: ' + storageErr.message);
+
+      // 1.5 — Run the safety validator before this upload goes any further
+      const { data: { session } } = await sb.auth.getSession();
+
+      const validateResp = await fetch(
+        `${SUPABASE_URL}/functions/v1/validate-upload`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({ storagePath }),
+        }
+      );
+
+      const validation = await validateResp.json();
+
+      if (!validation.ok) {
+        // Reject — remove the zip from storage, show the user exactly why
+        await sb.storage.from('module-uploads').remove([storagePath]);
+
+        const detailsList = validation.details && validation.details.length
+          ? '\n\n' + validation.details.join('\n')
+          : '';
+
+        throw new Error(
+          (validation.reason || 'Upload failed safety checks.') + detailsList
+        );
+      }
 
       // 2. Record the upload in the 'models' table
       //    (pr_status = 'pending' — the Edge Function / GitHub Action will update it)
