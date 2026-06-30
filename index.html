@@ -38,6 +38,10 @@
         <input type="password" id="login-password" placeholder="••••••••" autocomplete="current-password" />
       </div>
 
+      <p style="text-align:right; margin-bottom:1rem;">
+        <a href="#" id="forgot-password-link" style="font-size:0.8125rem; color:var(--accent); text-decoration:none;">Forgot password?</a>
+      </p>
+
       <button class="btn btn--primary btn--full" id="login-btn">Sign in</button>
     </div>
 
@@ -217,6 +221,29 @@
 
     setLoading(btn, false);
     showAlert('reg-success', 'Account created! Check your email and verify it before signing in.');
+  });
+
+  // ── FORGOT PASSWORD ──────────────────────────────────────
+  document.getElementById('forgot-password-link').addEventListener('click', async (e) => {
+    e.preventDefault();
+    clearAlerts('login-error', 'login-success');
+
+    const email = document.getElementById('login-email').value.trim();
+
+    if (!email) {
+      showAlert('login-error', 'Enter your email above first, then click "Forgot password?"');
+      return;
+    }
+
+    const { error } = await sb.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin + '/reset-password.html',
+    });
+
+    if (error) {
+      showAlert('login-error', error.message);
+    } else {
+      showAlert('login-success', 'Password reset email sent. Check your inbox.');
+    }
   });
 </script>
 
