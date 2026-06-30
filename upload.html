@@ -278,7 +278,9 @@
     btn.innerHTML = '<span class="spinner"></span> Uploading…';
 
     try {
-      // 1. Upload zip to Supabase Storage under: uploads/{user_id}/{moduleName}.zip
+      // 1. Upload zip to Supabase Storage under: {user_id}/{moduleName}_{timestamp}.zip
+      const storagePath = `${currentUser.id}/${moduleName}_${Date.now()}.zip`;
+
       const { error: storageErr } = await sb.storage
         .from('module-uploads')
         .upload(storagePath, selectedFile, { upsert: true });
