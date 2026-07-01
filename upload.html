@@ -336,6 +336,21 @@
 
       if (dbErr) throw new Error('Database save failed: ' + dbErr.message);
 
+      // If upsert returned no rows, fetch the row manually
+      let modelId;
+      if (dbResult && dbResult.length > 0) {
+        modelId = dbResult[0].id;
+      } else {
+        const { data: fetchedRow } = await sb
+          .from('models')
+          .select('id')
+          .eq('user_id', currentUser.id)
+          .eq('module_path', modulePath)
+          .single();
+        if (!fetchedRow) throw new Error('Could not retrieve model ID after save.');
+        modelId = fetchedRow.id;
+      }
+
       // 3. Trigger the Edge Function that will open the GitHub PR
       //    (Phase 4 — wired in later; for now this is a placeholder call)
       const { data: { session: currentSession } } = await sb.auth.getSession();
