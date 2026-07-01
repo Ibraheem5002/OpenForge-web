@@ -60,6 +60,27 @@ from openforge.YOUR_USERNAME import your_module</pre>
 <!-- ── Supabase SDK ───────────────────────────────────────── -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
+<!-- ── Delete confirmation modal ─────────────────────── -->
+<div class="modal-backdrop" id="delete-modal">
+  <div class="modal">
+    <h2>Delete this module?</h2>
+    <p>
+      This will permanently remove the module from your dashboard and storage.
+      <strong>This cannot be undone.</strong><br><br>
+      To confirm, type <strong id="delete-confirm-label"></strong> below:
+    </p>
+    <div class="field">
+      <input type="text" id="delete-confirm-input"
+             placeholder="username/module_name" autocomplete="off" />
+    </div>
+    <div id="delete-modal-error" class="alert alert--error"></div>
+    <div class="modal__actions">
+      <button class="btn btn--ghost" id="delete-modal-cancel">Cancel</button>
+      <button class="btn btn--danger" id="delete-modal-confirm">Delete module</button>
+    </div>
+  </div>
+</div>
+
 <script>
   // ── CONFIG — same values as index.html ──────────────────
   const SUPABASE_URL  = 'https://njrmizljaqsiuxhlrfia.supabase.co';
@@ -165,6 +186,11 @@ from openforge.YOUR_USERNAME import your_module</pre>
         <div class="model-item__actions">
           <a href="upload.html?replace=${encodeURIComponent(m.module_path)}"
              class="btn btn--ghost" style="font-size:0.8125rem;padding:0.4rem 0.875rem;">Replace</a>
+          <button class="btn btn--danger"
+            style="font-size:0.8125rem;padding:0.4rem 0.875rem;"
+            onclick="openDeleteModal('${escHtml(m.id)}', '${escHtml(currentProfile.username)}', '${escHtml(m.module_path)}', '${escHtml(m.storage_path)}')">
+            Delete
+          </button>
         </div>
       `;
 
@@ -187,6 +213,76 @@ from openforge.YOUR_USERNAME import your_module</pre>
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
   }
+
+  // ── Delete module ─────────────────────────────────────────
+  let deleteTarget = null; // { id, username, modulePath, storagePath }
+
+  function openDeleteModal(id, username, modulePath, storagePath) {
+    deleteTarget = { id, username, modulePath, storagePath };
+
+    const label = `${username}/${modulePath}`;
+    document.getElementById('delete-confirm-label').textContent = label;
+    document.getElementById('delete-confirm-input').value = '';
+    document.getElementById('delete-modal-error').textContent = '';
+    document.getElementById('delete-modal-error').classList.remove('visible');
+    document.getElementById('delete-modal').classList.add('visible');
+  }
+
+  document.getElementById('delete-modal-cancel').addEventListener('click', () => {
+    document.getElementById('delete-modal').classList.remove('visible');
+    deleteTarget = null;
+  });
+
+  document.getElementById('delete-modal-confirm').addEventListener('click', async () => {
+    const errorEl = document.getElementById('delete-modal-error');
+    errorEl.textContent = '';
+    errorEl.classList.remove('visible');
+
+    if (!deleteTarget) return;
+
+    const typed    = document.getElementById('delete-confirm-input').value.trim();
+    const expected = `${deleteTarget.username}/${deleteTarget.modulePath}`;
+
+    if (typed !== expected) {
+      errorEl.textContent = `Type exactly: ${expected}`;
+      errorEl.classList.add('visible');
+      return;
+    }
+
+    const btn = document.getElementById('delete-modal-confirm');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>';
+
+    try {
+      // 1. Delete from storage (if a zip exists)
+      if (deleteTarget.storagePath) {
+        const { error: storageErr } = await sb.storage
+          .from('module-uploads')
+          .remove([deleteTarget.storagePath]);
+        if (storageErr) throw new Error('Storage delete failed: ' + storageErr.message);
+      }
+
+      // 2. Delete the row from the models table
+      const { error: dbErr } = await sb
+        .from('models')
+        .delete()
+        .eq('id', deleteTarget.id)
+        .eq('user_id', currentUser.id); // safety check — only own rows
+
+      if (dbErr) throw new Error('Database delete failed: ' + dbErr.message);
+
+      // 3. Close modal and reload the list
+      document.getElementById('delete-modal').classList.remove('visible');
+      deleteTarget = null;
+      loadModules(currentUser.id);
+
+    } catch (err) {
+      errorEl.textContent = err.message;
+      errorEl.classList.add('visible');
+      btn.disabled = false;
+      btn.innerHTML = 'Delete module';
+    }
+  });
 </script>
 
 </body>
