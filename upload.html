@@ -354,6 +354,12 @@
       document.getElementById('structure-preview').style.display = 'none';
 
     } catch (err) {
+      // Best-effort cleanup: remove orphaned zip if something failed after upload
+      try {
+        await sb.storage.from('module-uploads').remove([storagePath]);
+      } catch (_cleanupErr) {
+        // ignore cleanup failures, not critical
+      }
       btn.innerHTML = 'Submit module';
       btn.disabled  = false;
       showAlert('upload-error', err.message);
