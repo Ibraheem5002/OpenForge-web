@@ -329,15 +329,38 @@
         uploaded_at : new Date().toISOString(),
       };
 
-      const { error: dbErr } = await sb
+      const { data: dbResult, error: dbErr } = await sb
         .from('models')
-        .upsert(modelRecord, { onConflict: 'user_id,module_path' });
+        .upsert(modelRecord, { onConflict: 'user_id,module_path' })
+        .select();
 
       if (dbErr) throw new Error('Database save failed: ' + dbErr.message);
 
       // 3. Trigger the Edge Function that will open the GitHub PR
       //    (Phase 4 — wired in later; for now this is a placeholder call)
-      // await triggerGitHubPR(storagePath, modulePath, moduleName);
+      const { data: { session: currentSession } } = await sb.auth.getSession();
+
+      const prResp = await fetch(
+        `${SUPABASE_URL}/functions/v1/create-pr`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${currentSession.access_token}`,
+          },
+          body: JSON.stringify({
+            storagePath,
+            moduleName,
+            modulePath,
+            modelId: dbResult.data[0].id,
+          }),
+        }
+      );
+
+      const prResult = await prResp.json();
+      if (!prResult.ok) {
+        throw new Error('GitHub PR failed: ' + prResult.reason);
+      }
 
       btn.innerHTML = 'Submit module';
       btn.disabled  = false;
